@@ -8,6 +8,7 @@ import (
 
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/ast"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/astparser"
+	"github.com/wundergraph/graphql-go-tools/v2/pkg/engine/datasource/httpclient"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/engine/resolve"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/middleware/operation_complexity"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/operationreport"
@@ -36,6 +37,8 @@ type Request struct {
 	OperationName string          `json:"operationName"`
 	Variables     json.RawMessage `json:"variables,omitempty"`
 	Query         string          `json:"query"`
+
+	Files []*httpclient.FileUpload `json:"-"`
 
 	document     ast.Document
 	isParsed     bool
