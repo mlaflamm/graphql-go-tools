@@ -2,6 +2,7 @@ package graphql
 
 import (
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/astnormalization"
+	"github.com/wundergraph/graphql-go-tools/v2/pkg/astnormalization/uploads"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/graphqlerrors"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/operationreport"
 )
@@ -9,6 +10,8 @@ import (
 type NormalizationResult struct {
 	Successful bool
 	Errors     graphqlerrors.Errors
+
+	UploadMapping []uploads.UploadPathMapping
 }
 
 func (r *Request) Normalize(schema *Schema, options ...astnormalization.Option) (result NormalizationResult, err error) {
@@ -53,6 +56,26 @@ func (r *Request) Normalize(schema *Schema, options ...astnormalization.Option) 
 	r.Variables = r.document.Input.Variables
 
 	return NormalizationResult{Successful: true, Errors: nil}, nil
+}
+
+func (r *Request) NormalizeVariables(schema *Schema) (result NormalizationResult, err error) {
+	if schema == nil {
+		return NormalizationResult{Successful: false, Errors: nil}, ErrNilSchema
+	}
+
+	report := operationreport.Report{}
+
+	r.document.Input.Variables = r.Variables
+
+	variablesNormalizer := astnormalization.NewVariablesNormalizer()
+	uploadsMapping := variablesNormalizer.NormalizeOperation(&r.document, &schema.document, &report)
+	if report.HasErrors() {
+		return NormalizationResultFromReport(report)
+	}
+
+	r.Variables = r.document.Input.Variables
+
+	return NormalizationResult{Successful: true, Errors: nil, UploadMapping: uploadsMapping}, nil
 }
 
 func NormalizationResultFromReport(report operationreport.Report) (NormalizationResult, error) {

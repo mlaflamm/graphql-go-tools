@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/apollocompatibility"
+	"github.com/wundergraph/graphql-go-tools/v2/pkg/engine/datasource/httpclient"
 
 	lru "github.com/hashicorp/golang-lru"
 	"github.com/jensneuse/abstractlogger"
@@ -38,10 +40,11 @@ func newInternalExecutionContext() *internalExecutionContext {
 	}
 }
 
-func (e *internalExecutionContext) prepare(ctx context.Context, variables []byte, request resolve.Request) {
+func (e *internalExecutionContext) prepare(ctx context.Context, variables []byte, request resolve.Request, files []*httpclient.FileUpload) {
 	e.setContext(ctx)
 	e.setVariables(variables)
 	e.setRequest(request)
+	e.setFiles(files)
 }
 
 func (e *internalExecutionContext) setRequest(request resolve.Request) {
@@ -55,6 +58,12 @@ func (e *internalExecutionContext) setContext(ctx context.Context) {
 func (e *internalExecutionContext) setVariables(variables []byte) {
 	if len(variables) != 0 {
 		e.resolveContext.Variables = astjson.MustParseBytes(variables)
+	}
+}
+
+func (e *internalExecutionContext) setFiles(files []*httpclient.FileUpload) {
+	if len(files) != 0 {
+		e.resolveContext.Files = files
 	}
 }
 
@@ -173,13 +182,42 @@ func (e *ExecutionEngine) Execute(ctx context.Context, operation *graphql.Reques
 
 	if normalize {
 		// Normalize the operation again, this time just extracting additional variables from arguments.
-		result, err := operation.Normalize(e.config.schema,
-			astnormalization.WithExtractVariables(),
-		)
+		result, err := operation.NormalizeVariables(e.config.schema)
 		if err != nil {
 			return err
 		} else if !result.Successful {
 			return result.Errors
+		}
+
+		// Normalize the variables returns list of uploads mapping if there are any of them present in a query
+		// type UploadPathMapping struct {
+		// 	VariableName       string - is a variable name holding the direct or nested value of type Upload, example "f"
+		// 	OriginalUploadPath string - is a path relative to variables which have an Upload type, example "variables.f"
+		// 	NewUploadPath      string - if variable was used in the inline object like this `arg: {f: $f}` this field will hold the new extracted path, example "variables.a.f", if it is an empty, there was no change in the path
+		// }
+
+		// update file uploads path if they were used in nested field in the extracted variables
+		for mapping := range slices.Values(result.UploadMapping) {
+			// if the NewUploadPath is empty it means that there was no change in the path - e.g. upload was directly passed to the argument
+			// e.g. field(fileArgument: $file) will result in []UploadPathMapping{ {VariableName: "file", OriginalUploadPath: "variables.file", NewUploadPath: ""} }
+			if mapping.NewUploadPath == "" {
+				continue
+			}
+
+			// look for the corresponding file which was used in the nested argument
+			// we are matching original upload path passed via uploads map with the mapping items
+			idx := slices.IndexFunc(operation.Files, func(file *httpclient.FileUpload) bool {
+				return file.VariablePath() == mapping.OriginalUploadPath
+			})
+
+			if idx == -1 {
+				continue
+			}
+
+			// if NewUploadPath is not empty the file argument was used in the nested object, and we need to update the path
+			// e.g. field(arg: {file: $file}) normalized to field(arg: $a) will result in []UploadPathMapping{ {VariableName: "file", OriginalUploadPath: "variables.file", NewUploadPath: "variables.a.file"} }
+			// so "variables.file" should be updated to "variables.a.file"
+			operation.Files[idx].SetVariablePath(result.UploadMapping[idx].NewUploadPath)
 		}
 	}
 
@@ -194,7 +232,7 @@ func (e *ExecutionEngine) Execute(ctx context.Context, operation *graphql.Reques
 	}
 
 	execContext := newInternalExecutionContext()
-	execContext.prepare(ctx, operation.Variables, operation.InternalRequest())
+	execContext.prepare(ctx, operation.Variables, operation.InternalRequest(), operation.Files)
 	for i := range options {
 		options[i](execContext)
 	}
