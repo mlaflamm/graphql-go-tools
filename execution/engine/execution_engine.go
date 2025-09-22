@@ -40,11 +40,12 @@ func newInternalExecutionContext() *internalExecutionContext {
 	}
 }
 
-func (e *internalExecutionContext) prepare(ctx context.Context, variables []byte, request resolve.Request, files []*httpclient.FileUpload) {
+func (e *internalExecutionContext) prepare(ctx context.Context, variables []byte, request resolve.Request, files []*httpclient.FileUpload, loaderHooks resolve.LoaderHooks) {
 	e.setContext(ctx)
 	e.setVariables(variables)
 	e.setRequest(request)
 	e.setFiles(files)
+	e.setLoaderHooks(loaderHooks)
 }
 
 func (e *internalExecutionContext) setRequest(request resolve.Request) {
@@ -65,6 +66,10 @@ func (e *internalExecutionContext) setFiles(files []*httpclient.FileUpload) {
 	if len(files) != 0 {
 		e.resolveContext.Files = files
 	}
+}
+
+func (e *internalExecutionContext) setLoaderHooks(loaderHooks resolve.LoaderHooks) {
+	e.resolveContext.LoaderHooks = loaderHooks
 }
 
 func (e *internalExecutionContext) reset() {
@@ -232,7 +237,7 @@ func (e *ExecutionEngine) Execute(ctx context.Context, operation *graphql.Reques
 	}
 
 	execContext := newInternalExecutionContext()
-	execContext.prepare(ctx, operation.Variables, operation.InternalRequest(), operation.Files)
+	execContext.prepare(ctx, operation.Variables, operation.InternalRequest(), operation.Files, operation.LoaderHooks)
 	for i := range options {
 		options[i](execContext)
 	}

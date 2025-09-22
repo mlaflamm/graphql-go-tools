@@ -38,7 +38,8 @@ type Request struct {
 	Variables     json.RawMessage `json:"variables,omitempty"`
 	Query         string          `json:"query"`
 
-	Files []*httpclient.FileUpload `json:"-"`
+	Files       []*httpclient.FileUpload `json:"-"`
+	LoaderHooks resolve.LoaderHooks      `json:"-"`
 
 	document     ast.Document
 	isParsed     bool
