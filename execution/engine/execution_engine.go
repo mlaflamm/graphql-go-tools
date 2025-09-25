@@ -115,7 +115,7 @@ func NewExecutionEngine(ctx context.Context, logger abstractlogger.Logger, engin
 		return nil, err
 	}
 
-	introspectionCfg, err := introspection_datasource.NewIntrospectionConfigFactory(engineConfig.schema.Document())
+	introspectionCfg, err := introspection_datasource.NewIntrospectionConfigFactory(engineConfig.schema.ClientDocument())
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +188,7 @@ func (e *ExecutionEngine) Execute(ctx context.Context, operation *graphql.Reques
 		validator := variablesvalidation.NewVariablesValidator(variablesvalidation.VariablesValidatorOptions{
 			ApolloCompatibilityFlags: e.apolloCompatibilityFlags,
 		})
-		if err := validator.Validate(operation.Document(), e.config.schema.Document(), operation.Variables); err != nil {
+		if err := validator.Validate(operation.Document(), e.config.schema.ClientDocument(), operation.Variables); err != nil {
 			return err
 		}
 	}
