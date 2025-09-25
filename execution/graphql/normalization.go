@@ -68,7 +68,7 @@ func (r *Request) NormalizeVariables(schema *Schema) (result NormalizationResult
 	r.document.Input.Variables = r.Variables
 
 	variablesNormalizer := astnormalization.NewVariablesNormalizer()
-	uploadsMapping := variablesNormalizer.NormalizeOperation(&r.document, &schema.document, &report)
+	uploadsMapping := variablesNormalizer.NormalizeOperation(&r.document, &schema.clientDocument, &report)
 	if report.HasErrors() {
 		return NormalizationResultFromReport(report)
 	}
