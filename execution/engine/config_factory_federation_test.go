@@ -24,8 +24,7 @@ func TestEngineConfigFactory_EngineConfiguration(t *testing.T) {
 		httpClient *http.Client,
 		streamingClient *http.Client,
 		subgraphs []SubgraphConfiguration,
-		baseSchema string,
-		expectedConfigFactory func(t *testing.T, baseSchema string) Configuration,
+		expectedConfigFactory func(t *testing.T, baseSchema string, clientSchema string) Configuration,
 	) {
 		engineConfigFactory := NewFederationEngineConfigFactory(
 			engineCtx,
@@ -37,7 +36,7 @@ func TestEngineConfigFactory_EngineConfiguration(t *testing.T) {
 		config, err := engineConfigFactory.BuildEngineConfiguration()
 		assert.NoError(t, err)
 
-		expectedConfig := expectedConfigFactory(t, baseSchema)
+		expectedConfig := expectedConfigFactory(t, baseFederationSchema, clientFederationSchema)
 		assert.Equal(t, expectedConfig, config)
 	}
 
@@ -46,8 +45,7 @@ func TestEngineConfigFactory_EngineConfiguration(t *testing.T) {
 		httpClient *http.Client,
 		streamingClient *http.Client,
 		subgraphs []SubgraphConfiguration,
-		baseSchema string,
-		expectedConfigFactory func(t *testing.T, baseSchema string) Configuration,
+		expectedConfigFactory func(t *testing.T, baseSchema string, clientSchema string) Configuration,
 	) {
 		engineConfigFactory := NewFederationEngineConfigFactory(
 			engineCtx,
@@ -69,7 +67,7 @@ func TestEngineConfigFactory_EngineConfiguration(t *testing.T) {
 		config, err := engineConfigFactory.BuildEngineConfigurationWithRouterConfig(&rc1)
 		assert.NoError(t, err)
 
-		expectedConfig := expectedConfigFactory(t, baseSchema)
+		expectedConfig := expectedConfigFactory(t, baseFederationSchema, clientFederationSchema)
 		assert.Equal(t, expectedConfig, config)
 	}
 
@@ -82,8 +80,7 @@ func TestEngineConfigFactory_EngineConfiguration(t *testing.T) {
 			httpClient *http.Client,
 			streamingClient *http.Client,
 			subgraphs []SubgraphConfiguration,
-			baseSchema string,
-			expectedConfigFactory func(t *testing.T, baseSchema string) Configuration,
+			expectedConfigFactory func(t *testing.T, baseSchema string, clientSchema string) Configuration,
 		)
 	}{
 		{name: "should create engine configuration", run: runWithoutError},
@@ -108,8 +105,8 @@ func TestEngineConfigFactory_EngineConfiguration(t *testing.T) {
 					URL:  "http://review.service",
 					SDL:  reviewSchema,
 				},
-			}, baseFederationSchema, func(t *testing.T, baseSchema string) Configuration {
-				schema, err := graphql.NewSchemaFromString(baseSchema)
+			}, func(t *testing.T, baseSchema string, clientSchema string) Configuration {
+				schema, err := graphql.NewSchemaFromStringWithClientSchema(baseSchema, &clientSchema)
 				require.NoError(t, err)
 
 				conf := NewConfiguration(schema)
@@ -414,6 +411,30 @@ scalar openfed__FieldSet`
 	baseFederationSchema = `directive @tag(name: String!) repeatable on ARGUMENT_DEFINITION | ENUM | ENUM_VALUE | FIELD_DEFINITION | INPUT_FIELD_DEFINITION | INPUT_OBJECT | INTERFACE | OBJECT | SCALAR | UNION
 
 type Query {
+  me: User
+  topProducts(first: Int = 5): [Product]
+}
+
+type User {
+  id: ID!
+  username: String!
+  reviews: [Review]
+}
+
+type Product {
+  upc: String!
+  name: String!
+  price: Int!
+  reviews: [Review]
+}
+
+type Review {
+  body: String!
+  author: User!
+  product: Product!
+}`
+
+	clientFederationSchema = `type Query {
   me: User
   topProducts(first: Int = 5): [Product]
 }

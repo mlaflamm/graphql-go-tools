@@ -33,10 +33,16 @@ type Schema struct {
 	document     ast.Document
 	isNormalized bool
 	hash         uint64
+
+	clientDocument ast.Document
 }
 
 func (s *Schema) Document() *ast.Document {
 	return &s.document
+}
+
+func (s *Schema) ClientDocument() *ast.Document {
+	return &s.clientDocument
 }
 
 // Hash returns the hash of the schema.
@@ -67,17 +73,27 @@ func NewSchemaFromReader(reader io.Reader) (*Schema, error) {
 		return nil, err
 	}
 
-	return createSchema(schemaContent, true)
+	return createSchema(schemaContent, nil, true)
 }
 
 func NewSchemaFromString(schema string) (*Schema, error) {
 	schemaContent := []byte(schema)
 
-	return createSchema(schemaContent, true)
+	return createSchema(schemaContent, nil, true)
+}
+
+func NewSchemaFromStringWithClientSchema(schema string, clientSchema *string) (*Schema, error) {
+	schemaContent := []byte(schema)
+	var clientSchemaContent []byte
+	if clientSchema != nil {
+		clientSchemaContent = []byte(*clientSchema)
+	}
+
+	return createSchema(schemaContent, clientSchemaContent, true)
 }
 
 func NewSchemaFromBytes(schema []byte) (*Schema, error) {
-	return createSchema(schema, true)
+	return createSchema(schema, nil, true)
 }
 
 func ValidateSchemaString(schema string) (result ValidationResult, err error) {
@@ -117,7 +133,7 @@ func (s *Schema) Normalize() (result NormalizationResult, err error) {
 		}, err
 	}
 
-	normalizedSchema, err := createSchema(normalizedSchemaBuffer.Bytes(), false)
+	normalizedSchema, err := createSchema(normalizedSchemaBuffer.Bytes(), nil, false)
 	if err != nil {
 		return NormalizationResult{
 			Successful: false,
@@ -392,7 +408,7 @@ func (s *Schema) putChildNode(nodes *[]TypeFields, typeName, fieldName string) (
 	return true
 }
 
-func createSchema(schemaContent []byte, mergeWithBaseSchema bool) (*Schema, error) {
+func createSchema(schemaContent []byte, clientSchemaContent []byte, mergeWithBaseSchema bool) (*Schema, error) {
 	document, report := astparser.ParseGraphqlDocumentBytes(schemaContent)
 	if report.HasErrors() {
 		return nil, report
@@ -414,10 +430,26 @@ func createSchema(schemaContent []byte, mergeWithBaseSchema bool) (*Schema, erro
 		rawSchema = rawSchemaBuffer.Bytes()
 	}
 
+	clientDocument := document
+	if clientSchemaContent != nil {
+		clientDocument, report = astparser.ParseGraphqlDocumentBytes(clientSchemaContent)
+		if report.HasErrors() {
+			return nil, report
+		}
+
+		if mergeWithBaseSchema {
+			err := asttransform.MergeDefinitionWithBaseSchema(&clientDocument)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	schema := &Schema{
-		rawInput:  schemaContent,
-		rawSchema: rawSchema,
-		document:  document,
+		rawInput:       schemaContent,
+		rawSchema:      rawSchema,
+		document:       document,
+		clientDocument: clientDocument,
 	}
 	if err := schema.calcHash(); err != nil {
 		return nil, err

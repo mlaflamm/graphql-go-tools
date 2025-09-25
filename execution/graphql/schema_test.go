@@ -74,7 +74,7 @@ func TestSchema_Normalize(t *testing.T) {
 func TestSchema_HasQueryType(t *testing.T) {
 	run := func(schema string, expectation bool) func(t *testing.T) {
 		return func(t *testing.T) {
-			parsedSchema, err := createSchema([]byte(schema), false)
+			parsedSchema, err := createSchema([]byte(schema), nil, false)
 			require.NoError(t, err)
 
 			result := parsedSchema.HasQueryType()
