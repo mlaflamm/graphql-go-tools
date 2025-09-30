@@ -73,8 +73,15 @@ func mustFactoryGRPC(t testing.TB, grpcClient grpc.ClientConnInterface) plan.Pla
 func mustGraphqlDataSourceConfiguration(t *testing.T, id string, factory plan.PlannerFactory[graphql_datasource.Configuration], metadata *plan.DataSourceMetadata, customConfig graphql_datasource.Configuration) plan.DataSourceConfiguration[graphql_datasource.Configuration] {
 	t.Helper()
 
-	cfg, err := plan.NewDataSourceConfiguration[graphql_datasource.Configuration](
+	return mustGraphqlDataSourceConfigurationWithName(t, id, id, factory, metadata, customConfig)
+}
+
+func mustGraphqlDataSourceConfigurationWithName(t *testing.T, id string, name string, factory plan.PlannerFactory[graphql_datasource.Configuration], metadata *plan.DataSourceMetadata, customConfig graphql_datasource.Configuration) plan.DataSourceConfiguration[graphql_datasource.Configuration] {
+	t.Helper()
+
+	cfg, err := plan.NewDataSourceConfigurationWithName[graphql_datasource.Configuration](
 		id,
+		name,
 		factory,
 		metadata,
 		customConfig,

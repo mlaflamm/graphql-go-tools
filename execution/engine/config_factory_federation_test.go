@@ -110,6 +110,7 @@ func TestEngineConfigFactory_EngineConfiguration(t *testing.T) {
 				require.NoError(t, err)
 
 				conf := NewConfiguration(schema)
+				conf.plannerConfig.EnableOperationNamePropagation = true
 				conf.SetFieldConfigurations(plan.FieldConfigurations{
 					{
 						TypeName:  "Query",
@@ -127,8 +128,9 @@ func TestEngineConfigFactory_EngineConfiguration(t *testing.T) {
 				require.NoError(t, err)
 
 				conf.SetDataSources([]plan.DataSource{
-					mustGraphqlDataSourceConfiguration(t,
+					mustGraphqlDataSourceConfigurationWithName(t,
 						"0",
+						"users",
 						gqlFactory,
 						&plan.DataSourceMetadata{
 							RootNodes: []plan.TypeField{
@@ -173,8 +175,9 @@ func TestEngineConfigFactory_EngineConfiguration(t *testing.T) {
 							CustomScalarTypeFields: []graphqlDataSource.SingleTypeField{},
 						}),
 					),
-					mustGraphqlDataSourceConfiguration(t,
+					mustGraphqlDataSourceConfigurationWithName(t,
 						"1",
+						"products",
 						gqlFactory,
 						&plan.DataSourceMetadata{
 							RootNodes: []plan.TypeField{
@@ -219,8 +222,9 @@ func TestEngineConfigFactory_EngineConfiguration(t *testing.T) {
 							CustomScalarTypeFields: []graphqlDataSource.SingleTypeField{},
 						}),
 					),
-					mustGraphqlDataSourceConfiguration(t,
+					mustGraphqlDataSourceConfigurationWithName(t,
 						"2",
+						"reviews",
 						gqlFactory,
 						&plan.DataSourceMetadata{
 							RootNodes: []plan.TypeField{

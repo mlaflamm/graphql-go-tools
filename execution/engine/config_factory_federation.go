@@ -145,6 +145,7 @@ func (f *FederationEngineConfigFactory) buildEngineConfiguration(routerConfig *n
 		return Configuration{}, err
 	}
 	plannerConfiguration.DefaultFlushIntervalMillis = DefaultFlushIntervalInMilliseconds
+	plannerConfiguration.EnableOperationNamePropagation = true // 2025-09-30 PCI : Propagate operation name for OTEL.
 	schemaSDL := routerConfig.EngineConfig.GraphqlSchema
 	clientSchemaSDL := routerConfig.EngineConfig.GraphqlClientSchema
 
@@ -236,12 +237,12 @@ func (f *FederationEngineConfigFactory) createPlannerConfiguration(routerConfig 
 		})
 	}
 
-	for _, ds := range engineConfig.DatasourceConfigurations {
+	for i, ds := range engineConfig.DatasourceConfigurations {
 		if ds.Kind != nodev1.DataSourceKind_GRAPHQL {
 			return nil, fmt.Errorf("invalid datasource kind %q", ds.Kind)
 		}
 
-		dataSource, err := f.subgraphDataSourceConfiguration(engineConfig, ds)
+		dataSource, err := f.subgraphDataSourceConfiguration(i, engineConfig, ds)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create data source configuration for data source %s: %w", ds.Id, err)
 		}
@@ -252,7 +253,7 @@ func (f *FederationEngineConfigFactory) createPlannerConfiguration(routerConfig 
 	return &outConfig, nil
 }
 
-func (f *FederationEngineConfigFactory) subgraphDataSourceConfiguration(engineConfig *nodev1.EngineConfiguration, in *nodev1.DataSourceConfiguration) (plan.DataSource, error) {
+func (f *FederationEngineConfigFactory) subgraphDataSourceConfiguration(subgraphIndex int, engineConfig *nodev1.EngineConfiguration, in *nodev1.DataSourceConfiguration) (plan.DataSource, error) {
 	var out plan.DataSource
 
 	factory, err := f.graphqlDataSourceFactory()
@@ -344,8 +345,9 @@ func (f *FederationEngineConfigFactory) subgraphDataSourceConfiguration(engineCo
 		return nil, fmt.Errorf("error creating custom configuration for data source %s: %w", in.Id, err)
 	}
 
-	out, err = plan.NewDataSourceConfiguration[graphql_datasource.Configuration](
+	out, err = plan.NewDataSourceConfigurationWithName[graphql_datasource.Configuration](
 		in.Id,
+		f.subgraphsConfigs[subgraphIndex].Name, // 2025-09-30 PCI : Include name in datasource config for OTEL.
 		factory,
 		f.dataSourceMetaData(in),
 		customConfiguration,
