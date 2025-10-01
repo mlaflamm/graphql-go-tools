@@ -187,12 +187,6 @@ func (l *Loader) LoadGraphQLResponseData(ctx *Context, response *GraphQLResponse
 	l.resolvable = resolvable
 	l.ctx = ctx
 	l.info = response.Info
-
-	// 2025-09-30 PCI :	Hack to support file upload with federated entity in the response.
-	//					Save files and restore them at the end of the fetch.
-	files := ctx.Files
-	defer func() { ctx.Files = files }()
-
 	return l.resolveFetchNode(response.Fetches)
 }
 
@@ -202,10 +196,6 @@ func (l *Loader) resolveFetchNode(node *FetchTreeNode) error {
 	}
 	switch node.Kind {
 	case FetchTreeNodeKindSingle:
-		// 2025-09-30 PCI :	Hack to support file upload with federated entity in the response.
-		// 					We assume the initial fetch is always a single node with file upload.
-		//					We unset the files after the first fetch, so following fetch are not mime-multipart.
-		defer func() { l.ctx.Files = nil }()
 		return l.resolveSingle(node.Item)
 	case FetchTreeNodeKindSequence:
 		return l.resolveSerial(node.ChildNodes)
