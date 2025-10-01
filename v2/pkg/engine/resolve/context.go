@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/wundergraph/astjson"
@@ -32,6 +33,9 @@ type Context struct {
 	fieldRenderer FieldValueRenderer
 
 	subgraphErrors error
+
+	// 2025-10-01 PCI :	Ensure that subgraph source loader with files is done exactly once.
+	loadedWithFiles *atomic.Bool
 }
 
 type ExecutionOptions struct {
@@ -156,6 +160,8 @@ func NewContext(ctx context.Context) *Context {
 	}
 	return &Context{
 		ctx: ctx,
+
+		loadedWithFiles: &atomic.Bool{},
 	}
 }
 
@@ -188,6 +194,12 @@ func (c *Context) clone(ctx context.Context) *Context {
 		for k, v := range c.RemapVariables {
 			cpy.RemapVariables[k] = v
 		}
+	}
+
+	if c.loadedWithFiles != nil {
+		cpy.loadedWithFiles = &atomic.Bool{}
+		// It is likely useless and unnecessary to copy the previous state value.
+		cpy.loadedWithFiles.Store(c.loadedWithFiles.Load())
 	}
 
 	return &cpy

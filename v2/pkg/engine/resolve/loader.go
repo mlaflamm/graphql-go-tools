@@ -1582,7 +1582,7 @@ func (l *Loader) setTracingInput(fetchItem *FetchItem, input []byte, trace *Data
 }
 
 func (l *Loader) loadByContext(ctx context.Context, source DataSource, input []byte, res *result) error {
-	if l.ctx.Files != nil {
+	if l.ctx.Files != nil && (l.ctx.loadedWithFiles == nil || l.ctx.loadedWithFiles.Swap(true) == false) {
 		return source.LoadWithFiles(ctx, input, l.ctx.Files, res.out)
 	}
 	return source.Load(ctx, input, res.out)
