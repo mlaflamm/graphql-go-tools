@@ -33,9 +33,10 @@ var (
 )
 
 type Request struct {
-	OperationName string          `json:"operationName"`
-	Variables     json.RawMessage `json:"variables,omitempty"`
-	Query         string          `json:"query"`
+	OperationName string              `json:"operationName"`
+	Variables     json.RawMessage     `json:"variables,omitempty"`
+	Query         string              `json:"query"`
+	LoaderHooks   resolve.LoaderHooks `json:"-"`
 
 	document     ast.Document
 	isParsed     bool

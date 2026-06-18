@@ -31,6 +31,35 @@ import (
 
 type customResolver struct{}
 
+type loaderHooksContextKey struct{}
+
+type recordingLoaderHooks struct {
+	mu              sync.Mutex
+	onLoadCalls     []resolve.DataSourceInfo
+	onFinishedCalls []resolve.DataSourceInfo
+	finishedContext string
+	responseInfo    *resolve.ResponseInfo
+}
+
+func (r *recordingLoaderHooks) OnLoad(ctx context.Context, ds resolve.DataSourceInfo) context.Context {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.onLoadCalls = append(r.onLoadCalls, ds)
+	return context.WithValue(ctx, loaderHooksContextKey{}, ds.Name)
+}
+
+func (r *recordingLoaderHooks) OnFinished(ctx context.Context, ds resolve.DataSourceInfo, info *resolve.ResponseInfo) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.onFinishedCalls = append(r.onFinishedCalls, ds)
+	if value, ok := ctx.Value(loaderHooksContextKey{}).(string); ok {
+		r.finishedContext = value
+	}
+	r.responseInfo = info
+}
+
 func (customResolver) Resolve(_ *resolve.Context, value []byte) ([]byte, error) {
 	return []byte("15"), nil
 }
@@ -322,6 +351,73 @@ func TestWithAdditionalHttpHeaders(t *testing.T) {
 		}
 		assert.Equal(t, expectedHeaders, internalExecutionCtx.resolveContext.Request.Header)
 	})
+}
+
+func TestExecutionEngine_Execute_UsesRequestLoaderHooks(t *testing.T) {
+	t.Parallel()
+
+	schema, err := graphql.NewSchemaFromString(`type Query { hero: String! }`)
+	require.NoError(t, err)
+
+	httpClient := testNetHttpClient(t, roundTripperTestCase{
+		expectedHost:     "example.com",
+		expectedPath:     "",
+		expectedBody:     `{"query":"{hero}"}`,
+		sendResponseBody: `{"data":{"hero":"Luke"}}`,
+		sendStatusCode:   http.StatusOK,
+	})
+
+	engineConfig := NewConfiguration(schema)
+	engineConfig.SetDataSources([]plan.DataSource{
+		mustGraphqlDataSourceConfigurationWithName(t,
+			"accounts-ds",
+			"accounts",
+			mustFactory(t, httpClient),
+			&plan.DataSourceMetadata{
+				RootNodes: []plan.TypeField{{
+					TypeName:   "Query",
+					FieldNames: []string{"hero"},
+				}},
+			},
+			mustConfiguration(t, graphql_datasource.ConfigurationInput{
+				Fetch: &graphql_datasource.FetchConfiguration{
+					URL:    "http://example.com",
+					Method: "POST",
+				},
+				SchemaConfiguration: mustSchemaConfig(t, nil, `type Query { hero: String! }`),
+			}),
+		),
+	})
+	engineConfig.SetFieldConfigurations([]plan.FieldConfiguration{{
+		TypeName:  "Query",
+		FieldName: "hero",
+	}})
+
+	engine, err := NewExecutionEngine(t.Context(), abstractlogger.Noop{}, engineConfig, resolve.ResolverOptions{MaxConcurrency: 1024})
+	require.NoError(t, err)
+
+	hooks := &recordingLoaderHooks{}
+	operation := graphql.Request{
+		OperationName: "Hero",
+		Query:         `query Hero { hero }`,
+		LoaderHooks:   hooks,
+	}
+
+	writer := graphql.NewEngineResultWriter()
+	err = engine.Execute(t.Context(), &operation, &writer)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"data":{"hero":"Luke"}}`, writer.String())
+
+	require.Len(t, hooks.onLoadCalls, 1)
+	assert.Equal(t, resolve.DataSourceInfo{ID: "accounts-ds", Name: "accounts"}, hooks.onLoadCalls[0])
+
+	require.Len(t, hooks.onFinishedCalls, 1)
+	assert.Equal(t, resolve.DataSourceInfo{ID: "accounts-ds", Name: "accounts"}, hooks.onFinishedCalls[0])
+	assert.Equal(t, "accounts", hooks.finishedContext)
+	require.NotNil(t, hooks.responseInfo)
+	assert.Equal(t, http.StatusOK, hooks.responseInfo.StatusCode)
+	require.NotNil(t, hooks.responseInfo.Request)
+	assert.Equal(t, "http://example.com", hooks.responseInfo.Request.URL.String())
 }
 
 type ExecutionEngineTestCase struct {
