@@ -130,6 +130,7 @@ func (f *FederationEngineConfigFactory) BuildEngineConfiguration(routerConfig *n
 		return Configuration{}, err
 	}
 	plannerConfiguration.DefaultFlushIntervalMillis = DefaultFlushIntervalInMilliseconds
+	plannerConfiguration.EnableOperationNamePropagation = true
 	schemaSDL := routerConfig.EngineConfig.GraphqlSchema
 
 	schema, err := graphql.NewSchemaFromString(schemaSDL)
@@ -153,6 +154,10 @@ func (f *FederationEngineConfigFactory) createPlannerConfiguration(routerConfig 
 	var (
 		outConfig plan.Configuration
 	)
+	subgraphNamesByID := make(map[string]string, len(routerConfig.GetSubgraphs()))
+	for _, subgraph := range routerConfig.GetSubgraphs() {
+		subgraphNamesByID[subgraph.GetId()] = subgraph.GetName()
+	}
 	// attach field usage information to the plan
 	engineConfig := routerConfig.EngineConfig
 	// outConfig.IncludeInfo = l.includeInfo
@@ -190,7 +195,7 @@ func (f *FederationEngineConfigFactory) createPlannerConfiguration(routerConfig 
 			return nil, fmt.Errorf("invalid datasource kind %q", ds.Kind)
 		}
 
-		dataSource, err := f.subgraphDataSourceConfiguration(engineConfig, ds)
+		dataSource, err := f.subgraphDataSourceConfiguration(engineConfig, ds, subgraphNamesByID[ds.Id])
 		if err != nil {
 			return nil, fmt.Errorf("failed to create data source configuration for data source %s: %w", ds.Id, err)
 		}
@@ -201,7 +206,7 @@ func (f *FederationEngineConfigFactory) createPlannerConfiguration(routerConfig 
 	return &outConfig, nil
 }
 
-func (f *FederationEngineConfigFactory) subgraphDataSourceConfiguration(engineConfig *nodev1.EngineConfiguration, in *nodev1.DataSourceConfiguration) (plan.DataSource, error) {
+func (f *FederationEngineConfigFactory) subgraphDataSourceConfiguration(engineConfig *nodev1.EngineConfiguration, in *nodev1.DataSourceConfiguration, subgraphName string) (plan.DataSource, error) {
 	var out plan.DataSource
 
 	factory, err := f.graphqlDataSourceFactory()
@@ -293,8 +298,13 @@ func (f *FederationEngineConfigFactory) subgraphDataSourceConfiguration(engineCo
 		return nil, fmt.Errorf("error creating custom configuration for data source %s: %w", in.Id, err)
 	}
 
-	out, err = plan.NewDataSourceConfiguration[graphql_datasource.Configuration](
+	if subgraphName == "" {
+		subgraphName = in.Id
+	}
+
+	out, err = plan.NewDataSourceConfigurationWithName[graphql_datasource.Configuration](
 		in.Id,
+		subgraphName,
 		factory,
 		f.dataSourceMetaData(in),
 		customConfiguration,
