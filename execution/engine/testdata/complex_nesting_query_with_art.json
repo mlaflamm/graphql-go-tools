@@ -91,12 +91,12 @@
               "kind": "Single",
               "path": "",
               "source_id": "0",
-              "source_name": "0",
+              "source_name": "accounts",
               "trace": {
                 "raw_input_data": {},
                 "input": {
                   "body": {
-                    "query": "{me {id username history {__typename ... on Purchase {wallet {currency}} ... on Sale {location product {upc __typename}}} __typename}}"
+                    "query": "query ComplexNesting__accounts__0 {me {id username history {__typename ... on Purchase {wallet {currency}} ... on Sale {location product {upc __typename}}} __typename}}"
                   },
                   "header": {},
                   "method": "POST",
@@ -241,7 +241,7 @@
                   "kind": "BatchEntity",
                   "path": "me.history.@.product",
                   "source_id": "1",
-                  "source_name": "1",
+                  "source_name": "products",
                   "trace": {
                     "raw_input_data": {
                       "upc": "top-2",
@@ -249,7 +249,7 @@
                     },
                     "input": {
                       "body": {
-                        "query": "query($representations: [_Any!]!){_entities(representations: $representations){... on Product {__typename name}}}",
+                        "query": "query ComplexNesting__products__1($representations: [_Any!]!){_entities(representations: $representations){... on Product {__typename name}}}",
                         "variables": {
                           "representations": [
                             {
@@ -378,7 +378,7 @@
                   "kind": "Entity",
                   "path": "me",
                   "source_id": "2",
-                  "source_name": "2",
+                  "source_name": "reviews",
                   "trace": {
                     "raw_input_data": {
                       "id": "1234",
@@ -409,7 +409,7 @@
                     },
                     "input": {
                       "body": {
-                        "query": "query($representations: [_Any!]!){_entities(representations: $representations){... on User {__typename reviews {__typename attachments {__typename ... on Question {body upc} ... on Video {upc size} ... on Rating {upc body}}}}}}",
+                        "query": "query ComplexNesting__reviews__2($representations: [_Any!]!){_entities(representations: $representations){... on User {__typename reviews {__typename attachments {__typename ... on Question {body upc} ... on Video {upc size} ... on Rating {upc body}}}}}}",
                         "variables": {
                           "representations": [
                             {
