@@ -53,6 +53,10 @@ func (e *internalExecutionContext) setVariables(variables []byte) {
 	}
 }
 
+func (e *internalExecutionContext) setLoaderHooks(loaderHooks resolve.LoaderHooks) {
+	e.resolveContext.LoaderHooks = loaderHooks
+}
+
 type ExecutionEngine struct {
 	logger                   abstractlogger.Logger
 	config                   Configuration
@@ -211,6 +215,7 @@ func (e *ExecutionEngine) Execute(ctx context.Context, operation *graphql.Reques
 	execContext.setContext(ctx)
 	execContext.setVariables(operation.Variables)
 	execContext.setRequest(operation.InternalRequest())
+	execContext.setLoaderHooks(operation.LoaderHooks)
 	execContext.resolveContext.RemapVariables = remapVariables
 
 	for i := range options {
