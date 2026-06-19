@@ -8,6 +8,7 @@ import (
 
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/ast"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/astparser"
+	"github.com/wundergraph/graphql-go-tools/v2/pkg/engine/datasource/httpclient"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/engine/plan"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/engine/resolve"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/operationreport"
@@ -47,6 +48,10 @@ type Request struct {
 
 	estimatedCost int
 	actualCost    int
+
+	files                 []*httpclient.FileUpload
+	remapVariables        map[string]string
+	uploadPreparationDone bool
 }
 
 func UnmarshalRequest(reader io.Reader, request *Request) error {
@@ -77,6 +82,14 @@ func (r *Request) Document() *ast.Document {
 
 func (r *Request) InternalRequest() resolve.Request {
 	return r.request
+}
+
+func (r *Request) RemapVariables() map[string]string {
+	return r.remapVariables
+}
+
+func (r *Request) Files() []*httpclient.FileUpload {
+	return r.files
 }
 
 func (r *Request) Print(writer io.Writer) (n int, err error) {

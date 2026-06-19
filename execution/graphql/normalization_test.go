@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/astprinter"
+	"github.com/wundergraph/graphql-go-tools/v2/pkg/engine/datasource/httpclient"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/graphqlerrors"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/operationreport"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/starwars"
@@ -199,6 +200,40 @@ func TestRequest_Normalize(t *testing.T) {
 		runNormalizationWithSchema(t, schema, &request, `{"a":[1]}`, `query Hello($a: [Int]){
     hello(arg: $a)
 }`)
+	})
+
+	t.Run("should prepare upload request before execution", func(t *testing.T) {
+		t.Parallel()
+
+		schema, err := NewSchemaFromString(`
+			scalar Upload
+			input DeeplyNestedFileUpload { file: Upload! }
+			input FileUpload { nested: DeeplyNestedFileUpload! }
+			type Query { _: Boolean }
+			type Mutation { singleUploadWithInput(arg: FileUpload!): Boolean! }
+		`)
+		require.NoError(t, err)
+
+		request := Request{
+			OperationName: "Upload",
+			Variables:     []byte(`{"whatever":null}`),
+			Query:         `mutation Upload($whatever: Upload!){singleUploadWithInput(arg:{nested:{file:$whatever}})}`,
+		}
+
+		err = PrepareRequestForUploadExecution(&request, schema, []*httpclient.FileUpload{
+			httpclient.NewFileUpload("/tmp/file", "file.txt", "variables.whatever"),
+		})
+		require.NoError(t, err)
+		require.True(t, request.IsNormalized())
+		assert.Equal(t, "variables.a.nested.file", request.Files()[0].VariablePath())
+		assert.Equal(t, map[string]string{"a": "a"}, request.RemapVariables())
+		assert.JSONEq(t, `{"a":{"nested":{"file":null}},"whatever":null}`, string(request.Variables))
+
+		op, err := astprinter.PrintStringIndent(&request.document, "    ")
+		require.NoError(t, err)
+		assert.Equal(t, `mutation Upload($a: FileUpload!, $whatever: Upload!){
+    singleUploadWithInput(arg: $a)
+}`, op)
 	})
 }
 

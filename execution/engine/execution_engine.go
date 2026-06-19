@@ -18,6 +18,7 @@ import (
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/astnormalization"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/astprinter"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/astvalidation"
+	"github.com/wundergraph/graphql-go-tools/v2/pkg/engine/datasource/httpclient"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/engine/datasource/introspection_datasource"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/engine/plan"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/engine/postprocess"
@@ -50,6 +51,12 @@ func (e *internalExecutionContext) setContext(ctx context.Context) {
 func (e *internalExecutionContext) setVariables(variables []byte) {
 	if len(variables) != 0 {
 		e.resolveContext.Variables = astjson.MustParseBytes(variables)
+	}
+}
+
+func (e *internalExecutionContext) setFiles(files []*httpclient.FileUpload) {
+	if len(files) != 0 {
+		e.resolveContext.Files = files
 	}
 }
 
@@ -188,7 +195,7 @@ func (e *ExecutionEngine) Execute(ctx context.Context, operation *graphql.Reques
 	// Remap operation variables to canonical names. This mirrors what the cosmo
 	// router does so that downstream code (planner, cost calc, resolver) always
 	// goes through VariablesView/RemapVariables when reading variables.
-	var remapVariables map[string]string
+	remapVariables := operation.RemapVariables()
 	if normalize {
 		var remapReport operationreport.Report
 		remapVariables = astnormalization.NewVariablesMapper().NormalizeOperation(
@@ -215,6 +222,7 @@ func (e *ExecutionEngine) Execute(ctx context.Context, operation *graphql.Reques
 	execContext.setContext(ctx)
 	execContext.setVariables(operation.Variables)
 	execContext.setRequest(operation.InternalRequest())
+	execContext.setFiles(operation.Files())
 	execContext.setLoaderHooks(operation.LoaderHooks)
 	execContext.resolveContext.RemapVariables = remapVariables
 

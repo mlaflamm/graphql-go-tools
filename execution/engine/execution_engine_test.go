@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"sync"
 	"testing"
@@ -418,6 +419,178 @@ func TestExecutionEngine_Execute_UsesRequestLoaderHooks(t *testing.T) {
 	assert.Equal(t, http.StatusOK, hooks.responseInfo.StatusCode)
 	require.NotNil(t, hooks.responseInfo.Request)
 	assert.Equal(t, "http://example.com", hooks.responseInfo.Request.URL.String())
+}
+
+func TestExecutionEngine_Execute_UsesPreparedRequestFiles(t *testing.T) {
+	t.Parallel()
+
+	schema, err := graphql.NewSchemaFromString(`
+		scalar Upload
+		input DeeplyNestedFileUpload { file: Upload! }
+		input FileUpload { nested: DeeplyNestedFileUpload! }
+		type Query { _: Boolean }
+		type Mutation { singleUploadWithInput(arg: FileUpload!): Boolean! }
+	`)
+	require.NoError(t, err)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, r.ParseMultipartForm(10<<20))
+
+		operations := r.MultipartForm.Value["operations"]
+		require.Len(t, operations, 1)
+
+		var payload struct {
+			Query     string          `json:"query"`
+			Variables json.RawMessage `json:"variables"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(operations[0]), &payload))
+		assert.Contains(t, payload.Query, "$a: FileUpload!")
+		assert.Contains(t, payload.Query, "singleUploadWithInput(arg:")
+		assert.Contains(t, payload.Query, "$a)")
+		assert.JSONEq(t, `{"a":{"nested":{"file":null}}}`, string(payload.Variables))
+
+		uploadMap := r.MultipartForm.Value["map"]
+		require.Len(t, uploadMap, 1)
+		assert.JSONEq(t, `{"0":["variables.a.nested.file"]}`, uploadMap[0])
+
+		files := r.MultipartForm.File["0"]
+		require.Len(t, files, 1)
+		assert.Equal(t, "file.txt", files[0].Filename)
+
+		_, _ = io.WriteString(w, `{"data":{"singleUploadWithInput":true}}`)
+	}))
+	defer ts.Close()
+
+	engineConfig := NewConfiguration(schema)
+	engineConfig.SetFieldConfigurations([]plan.FieldConfiguration{{
+		TypeName:  "Mutation",
+		FieldName: "singleUploadWithInput",
+		Path:      []string{"singleUploadWithInput"},
+		Arguments: []plan.ArgumentConfiguration{{
+			Name:         "arg",
+			SourceType:   plan.FieldArgumentSource,
+			RenderConfig: plan.RenderArgumentAsGraphQLValue,
+		}},
+	}})
+	engineConfig.SetDataSources([]plan.DataSource{
+		mustGraphqlDataSourceConfiguration(t,
+			"employees-ds",
+			mustFactory(t, ts.Client()),
+			&plan.DataSourceMetadata{
+				RootNodes: []plan.TypeField{{
+					TypeName:   "Mutation",
+					FieldNames: []string{"singleUploadWithInput"},
+				}},
+			},
+			mustConfiguration(t, graphql_datasource.ConfigurationInput{
+				Fetch: &graphql_datasource.FetchConfiguration{
+					URL:    ts.URL,
+					Method: "POST",
+				},
+				SchemaConfiguration: mustSchemaConfig(t, nil, `
+					scalar Upload
+					input DeeplyNestedFileUpload { file: Upload! }
+					input FileUpload { nested: DeeplyNestedFileUpload! }
+					type Query { _: Boolean }
+					type Mutation { singleUploadWithInput(arg: FileUpload!): Boolean! }
+				`),
+			}),
+		),
+	})
+
+	engine, err := NewExecutionEngine(t.Context(), abstractlogger.Noop{}, engineConfig, resolve.ResolverOptions{MaxConcurrency: 1024})
+	require.NoError(t, err)
+
+	file, err := os.CreateTemp(t.TempDir(), "upload-*.txt")
+	require.NoError(t, err)
+	defer file.Close()
+	require.NoError(t, os.WriteFile(file.Name(), []byte("hello"), 0644))
+
+	operation := graphql.Request{
+		OperationName: "Upload",
+		Query:         `mutation Upload($whatever: Upload!){singleUploadWithInput(arg:{nested:{file:$whatever}})}`,
+		Variables:     []byte(`{"whatever":null}`),
+	}
+	require.NoError(t, graphql.PrepareRequestForUploadExecution(&operation, schema, []*httpclient.FileUpload{
+		httpclient.NewFileUpload(file.Name(), "file.txt", "variables.whatever"),
+	}))
+
+	writer := graphql.NewEngineResultWriter()
+	err = engine.Execute(t.Context(), &operation, &writer)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"data":{"singleUploadWithInput":true}}`, writer.String())
+}
+
+func TestExecutionEngine_Execute_PreservesPreparedRequestFiles(t *testing.T) {
+	t.Parallel()
+
+	schema, err := graphql.NewSchemaFromString(`
+		scalar Upload
+		input DeeplyNestedFileUpload { file: Upload! }
+		input FileUpload { nested: DeeplyNestedFileUpload! }
+		type Query { _: Boolean }
+		type Mutation { singleUploadWithInput(arg: FileUpload!): Boolean! }
+	`)
+	require.NoError(t, err)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, r.ParseMultipartForm(10<<20))
+		assert.JSONEq(t, `{"0":["variables.a.nested.file"]}`, r.MultipartForm.Value["map"][0])
+		_, _ = io.WriteString(w, `{"data":{"singleUploadWithInput":true}}`)
+	}))
+	defer ts.Close()
+
+	engineConfig := NewConfiguration(schema)
+	engineConfig.SetFieldConfigurations([]plan.FieldConfiguration{{
+		TypeName:  "Mutation",
+		FieldName: "singleUploadWithInput",
+		Path:      []string{"singleUploadWithInput"},
+		Arguments: []plan.ArgumentConfiguration{{
+			Name:         "arg",
+			SourceType:   plan.FieldArgumentSource,
+			RenderConfig: plan.RenderArgumentAsGraphQLValue,
+		}},
+	}})
+	engineConfig.SetDataSources([]plan.DataSource{
+		mustGraphqlDataSourceConfiguration(t,
+			"employees-ds",
+			mustFactory(t, ts.Client()),
+			&plan.DataSourceMetadata{RootNodes: []plan.TypeField{{TypeName: "Mutation", FieldNames: []string{"singleUploadWithInput"}}}},
+			mustConfiguration(t, graphql_datasource.ConfigurationInput{
+				Fetch: &graphql_datasource.FetchConfiguration{URL: ts.URL, Method: "POST"},
+				SchemaConfiguration: mustSchemaConfig(t, nil, `
+					scalar Upload
+					input DeeplyNestedFileUpload { file: Upload! }
+					input FileUpload { nested: DeeplyNestedFileUpload! }
+					type Query { _: Boolean }
+					type Mutation { singleUploadWithInput(arg: FileUpload!): Boolean! }
+				`),
+			}),
+		),
+	})
+
+	engine, err := NewExecutionEngine(t.Context(), abstractlogger.Noop{}, engineConfig, resolve.ResolverOptions{MaxConcurrency: 1024})
+	require.NoError(t, err)
+
+	file, err := os.CreateTemp(t.TempDir(), "upload-*.txt")
+	require.NoError(t, err)
+	defer file.Close()
+	require.NoError(t, os.WriteFile(file.Name(), []byte("hello"), 0644))
+
+	operation := graphql.Request{
+		OperationName: "Upload",
+		Query:         `mutation Upload($whatever: Upload!){singleUploadWithInput(arg:{nested:{file:$whatever}})}`,
+		Variables:     []byte(`{"whatever":null}`),
+	}
+	require.NoError(t, graphql.PrepareRequestForUploadExecution(&operation, schema, []*httpclient.FileUpload{
+		httpclient.NewFileUpload(file.Name(), "file.txt", "variables.whatever"),
+	}))
+
+	writer := graphql.NewEngineResultWriter()
+	err = engine.Execute(t.Context(), &operation, &writer)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"data":{"singleUploadWithInput":true}}`, writer.String())
+	assert.Equal(t, "variables.a.nested.file", operation.Files()[0].VariablePath())
 }
 
 type ExecutionEngineTestCase struct {

@@ -1,7 +1,12 @@
 package graphql
 
 import (
+	"bytes"
+
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/astnormalization"
+	"github.com/wundergraph/graphql-go-tools/v2/pkg/astnormalization/uploads"
+	"github.com/wundergraph/graphql-go-tools/v2/pkg/astparser"
+	"github.com/wundergraph/graphql-go-tools/v2/pkg/astprinter"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/graphqlerrors"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/operationreport"
 )
@@ -53,6 +58,53 @@ func (r *Request) Normalize(schema *Schema, options ...astnormalization.Option) 
 	r.Variables = r.document.Input.Variables
 
 	return NormalizationResult{Successful: true, Errors: nil}, nil
+}
+
+func (r *Request) normalizeUploadVariables(schema *Schema) (uploadMapping []uploads.UploadPathMapping, err error) {
+	if schema == nil {
+		return nil, ErrNilSchema
+	}
+
+	report := r.parseQueryOnce()
+	if report.HasErrors() {
+		_, err = NormalizationResultFromReport(report)
+		return nil, err
+	}
+
+	r.document.Input.Variables = r.Variables
+
+	var operationBuf bytes.Buffer
+	if err = astprinter.Print(&r.document, &operationBuf); err != nil {
+		return nil, err
+	}
+
+	uploadDocument, uploadReport := astparser.ParseGraphqlDocumentBytes(operationBuf.Bytes())
+	if uploadReport.HasErrors() {
+		_, err = NormalizationResultFromReport(uploadReport)
+		return nil, err
+	}
+
+	uploadDocument.Input.Variables = r.Variables
+	uploadsMapping := astnormalization.NewVariablesNormalizer().NormalizeOperation(&uploadDocument, schema.ClientDocument(), &report)
+	if report.HasErrors() {
+		_, err = NormalizationResultFromReport(report)
+		return nil, err
+	}
+
+	normalizer := astnormalization.NewWithOpts(astnormalization.WithExtractVariables())
+	if r.OperationName != "" {
+		normalizer.NormalizeNamedOperation(&r.document, schema.ClientDocument(), []byte(r.OperationName), &report)
+	} else {
+		normalizer.NormalizeOperation(&r.document, schema.ClientDocument(), &report)
+	}
+	if report.HasErrors() {
+		_, err = NormalizationResultFromReport(report)
+		return nil, err
+	}
+
+	r.Variables = r.document.Input.Variables
+
+	return uploadsMapping, nil
 }
 
 func NormalizationResultFromReport(report operationreport.Report) (NormalizationResult, error) {
