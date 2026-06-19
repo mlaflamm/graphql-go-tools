@@ -1709,10 +1709,11 @@ func (l *Loader) loadByContext(ctx context.Context, source DataSource, fetchItem
 	}
 
 	headers, extraKey := l.headersForSubgraphRequest(fetchItem)
+	files := l.filesForFetch(fetchItem)
 
 	if !l.singleFlightAllowed(fetchItem) {
 		// Disable single flight for mutations
-		return l.loadByContextDirect(ctx, source, headers, input, res)
+		return l.loadByContextDirect(ctx, source, headers, input, files, res)
 	}
 
 	item, shared := l.singleFlight.GetOrCreateItem(fetchItem, input, extraKey)
@@ -1757,7 +1758,7 @@ func (l *Loader) loadByContext(ctx context.Context, source DataSource, fetchItem
 	defer l.singleFlight.Finish(item)
 
 	// Perform the actual load
-	err := l.loadByContextDirect(ctx, source, headers, input, res)
+	err := l.loadByContextDirect(ctx, source, headers, input, files, res)
 	if err != nil {
 		item.err = err
 		return err
@@ -1775,9 +1776,24 @@ func (l *Loader) loadByContext(ctx context.Context, source DataSource, fetchItem
 	return nil
 }
 
-func (l *Loader) loadByContextDirect(ctx context.Context, source DataSource, headers http.Header, input []byte, res *result) error {
-	if l.ctx.Files != nil {
-		res.out, res.err = source.LoadWithFiles(ctx, headers, input, l.ctx.Files)
+func (l *Loader) filesForFetch(fetchItem *FetchItem) []*httpclient.FileUpload {
+	if l.ctx.Files == nil || fetchItem == nil || fetchItem.Fetch == nil {
+		return l.ctx.Files
+	}
+
+	// Upload files belong to the prepared client request. Federated entity follow-up
+	// fetches render their own representations and must not inherit multipart upload state.
+	switch fetchItem.Fetch.FetchKind() {
+	case FetchKindEntity, FetchKindEntityBatch:
+		return nil
+	default:
+		return l.ctx.Files
+	}
+}
+
+func (l *Loader) loadByContextDirect(ctx context.Context, source DataSource, headers http.Header, input []byte, files []*httpclient.FileUpload, res *result) error {
+	if files != nil {
+		res.out, res.err = source.LoadWithFiles(ctx, headers, input, files)
 	} else {
 		res.out, res.err = source.Load(ctx, headers, input)
 	}

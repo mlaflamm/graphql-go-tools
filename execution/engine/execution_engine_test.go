@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -519,6 +520,144 @@ func TestExecutionEngine_Execute_UsesPreparedRequestFiles(t *testing.T) {
 	err = engine.Execute(t.Context(), &operation, &writer)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"data":{"singleUploadWithInput":true}}`, writer.String())
+}
+
+func TestExecutionEngine_Execute_DoesNotReuseUploadFilesForFederatedEntityFetches(t *testing.T) {
+	t.Parallel()
+
+	schema, err := graphql.NewSchemaFromString(`
+		scalar Upload
+		type Product {
+			upc: String!
+			title: String!
+		}
+		type Query { _: Boolean }
+		type Mutation {
+			upload(file: Upload!): Product!
+		}
+	`)
+	require.NoError(t, err)
+
+	var uploadRequests int
+	uploadServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uploadRequests++
+		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		require.NoError(t, err)
+		assert.Equal(t, "multipart/form-data", mediaType)
+		require.NoError(t, r.ParseMultipartForm(10<<20))
+		assert.JSONEq(t, `{"0":["variables.file"]}`, r.MultipartForm.Value["map"][0])
+		_, _ = io.WriteString(w, `{"data":{"upload":{"__typename":"Product","upc":"sku-1"}}}`)
+	}))
+	defer uploadServer.Close()
+
+	var entityRequests int
+	entityServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		entityRequests++
+		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		require.NoError(t, err)
+		assert.Equal(t, "application/json", mediaType)
+
+		var payload struct {
+			Query     string          `json:"query"`
+			Variables json.RawMessage `json:"variables"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		assert.Contains(t, payload.Query, `_entities(representations: $representations)`)
+		assert.JSONEq(t, `{"representations":[{"__typename":"Product","upc":"sku-1"}]}`, string(payload.Variables))
+		_, _ = io.WriteString(w, `{"data":{"_entities":[{"__typename":"Product","title":"Shoe"}]}}`)
+	}))
+	defer entityServer.Close()
+
+	engineConfig := NewConfiguration(schema)
+	engineConfig.SetFieldConfigurations([]plan.FieldConfiguration{{
+		TypeName:  "Mutation",
+		FieldName: "upload",
+		Path:      []string{"upload"},
+		Arguments: []plan.ArgumentConfiguration{{
+			Name:         "file",
+			SourceType:   plan.FieldArgumentSource,
+			RenderConfig: plan.RenderArgumentAsGraphQLValue,
+		}},
+	}})
+	engineConfig.SetDataSources([]plan.DataSource{
+		mustGraphqlDataSourceConfiguration(t,
+			"upload-ds",
+			mustFactory(t, uploadServer.Client()),
+			&plan.DataSourceMetadata{
+				RootNodes: []plan.TypeField{
+					{TypeName: "Mutation", FieldNames: []string{"upload"}},
+					{TypeName: "Product", FieldNames: []string{"upc"}},
+				},
+				FederationMetaData: plan.FederationMetaData{
+					Keys: plan.FederationFieldConfigurations{{TypeName: "Product", SelectionSet: "upc"}},
+				},
+			},
+			mustConfiguration(t, graphql_datasource.ConfigurationInput{
+				Fetch: &graphql_datasource.FetchConfiguration{URL: uploadServer.URL, Method: "POST"},
+				SchemaConfiguration: mustSchemaConfig(t, &graphql_datasource.FederationConfiguration{
+					Enabled: true,
+					ServiceSDL: `
+						scalar Upload
+						type Query { _: Boolean }
+						type Mutation { upload(file: Upload!): Product! }
+						type Product @key(fields: "upc") { upc: String! }
+					`,
+				}, `
+					scalar Upload
+					type Query { _: Boolean }
+					type Mutation { upload(file: Upload!): Product! }
+					type Product @key(fields: "upc") { upc: String! }
+				`),
+			}),
+		),
+		mustGraphqlDataSourceConfiguration(t,
+			"title-ds",
+			mustFactory(t, entityServer.Client()),
+			&plan.DataSourceMetadata{
+				RootNodes: []plan.TypeField{{TypeName: "Product", FieldNames: []string{"upc", "title"}}},
+				FederationMetaData: plan.FederationMetaData{
+					Keys: plan.FederationFieldConfigurations{{TypeName: "Product", SelectionSet: "upc"}},
+				},
+			},
+			mustConfiguration(t, graphql_datasource.ConfigurationInput{
+				Fetch: &graphql_datasource.FetchConfiguration{URL: entityServer.URL, Method: "POST"},
+				SchemaConfiguration: mustSchemaConfig(t, &graphql_datasource.FederationConfiguration{
+					Enabled: true,
+					ServiceSDL: `
+						type Query { _: Boolean }
+						type Product @key(fields: "upc") { upc: String! title: String! }
+					`,
+				}, `
+					type Query { _: Boolean }
+					type Product @key(fields: "upc") { upc: String! title: String! }
+				`),
+			}),
+		),
+	})
+
+	engine, err := NewExecutionEngine(t.Context(), abstractlogger.Noop{}, engineConfig, resolve.ResolverOptions{MaxConcurrency: 1024})
+	require.NoError(t, err)
+
+	file, err := os.CreateTemp(t.TempDir(), "upload-*.txt")
+	require.NoError(t, err)
+	defer file.Close()
+	require.NoError(t, os.WriteFile(file.Name(), []byte("hello"), 0644))
+
+	operation := graphql.Request{
+		OperationName: "Upload",
+		Query:         `mutation Upload($file: Upload!){upload(file:$file){upc title}}`,
+		Variables:     []byte(`{"file":null}`),
+	}
+	require.NoError(t, graphql.PrepareRequestForUploadExecution(&operation, schema, []*httpclient.FileUpload{
+		httpclient.NewFileUpload(file.Name(), "file.txt", "variables.file"),
+	}))
+
+	writer := graphql.NewEngineResultWriter()
+	err = engine.Execute(t.Context(), &operation, &writer)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"data":{"upload":{"upc":"sku-1","title":"Shoe"}}}`, writer.String())
+	assert.Equal(t, 1, uploadRequests)
+	assert.Equal(t, 1, entityRequests)
 }
 
 func TestExecutionEngine_Execute_PreservesPreparedRequestFiles(t *testing.T) {
