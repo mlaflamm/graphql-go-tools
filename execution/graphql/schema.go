@@ -29,15 +29,21 @@ type TypeFieldArguments struct {
 }
 
 type Schema struct {
-	rawInput     []byte
-	rawSchema    []byte
-	document     ast.Document
-	isNormalized bool
-	hash         uint64
+	rawInput        []byte
+	rawSchema       []byte
+	document        ast.Document
+	clientDocument  ast.Document
+	hasClientSchema bool
+	isNormalized    bool
+	hash            uint64
 }
 
 func (s *Schema) Document() *ast.Document {
 	return &s.document
+}
+
+func (s *Schema) ClientDocument() *ast.Document {
+	return &s.clientDocument
 }
 
 // Hash returns the hash of the schema.
@@ -58,6 +64,16 @@ func (s *Schema) calcHash() error {
 	if err != nil {
 		return err
 	}
+	if s.hasClientSchema {
+		_, err = h.Write([]byte{0})
+		if err != nil {
+			return err
+		}
+		err = printer.Print(&s.clientDocument, h)
+		if err != nil {
+			return err
+		}
+	}
 	s.hash = h.Sum64()
 	return nil
 }
@@ -68,17 +84,27 @@ func NewSchemaFromReader(reader io.Reader) (*Schema, error) {
 		return nil, err
 	}
 
-	return createSchema(schemaContent, true)
+	return createSchema(schemaContent, nil, true)
 }
 
 func NewSchemaFromString(schema string) (*Schema, error) {
 	schemaContent := []byte(schema)
 
-	return createSchema(schemaContent, true)
+	return createSchema(schemaContent, nil, true)
+}
+
+func NewSchemaFromStringWithClientSchema(schema string, clientSchema *string) (*Schema, error) {
+	schemaContent := []byte(schema)
+	var clientSchemaContent []byte
+	if clientSchema != nil && *clientSchema != "" {
+		clientSchemaContent = []byte(*clientSchema)
+	}
+
+	return createSchema(schemaContent, clientSchemaContent, true)
 }
 
 func NewSchemaFromBytes(schema []byte) (*Schema, error) {
-	return createSchema(schema, true)
+	return createSchema(schema, nil, true)
 }
 
 func ValidateSchemaString(schema string) (result ValidationResult, err error) {
@@ -118,7 +144,27 @@ func (s *Schema) Normalize() (result NormalizationResult, err error) {
 		}, err
 	}
 
-	normalizedSchema, err := createSchema(normalizedSchemaBuffer.Bytes(), false)
+	var normalizedClientSchema []byte
+	if s.hasClientSchema {
+		clientReport := operationreport.Report{}
+		astnormalization.NormalizeDefinition(&s.clientDocument, &clientReport)
+		if clientReport.HasErrors() {
+			return NormalizationResultFromReport(clientReport)
+		}
+
+		normalizedClientSchemaBuffer := &bytes.Buffer{}
+		err = astprinter.PrintIndent(&s.clientDocument, []byte("    "), normalizedClientSchemaBuffer)
+		if err != nil {
+			return NormalizationResult{
+				Successful: false,
+				Errors:     nil,
+			}, err
+		}
+
+		normalizedClientSchema = normalizedClientSchemaBuffer.Bytes()
+	}
+
+	normalizedSchema, err := createSchema(normalizedSchemaBuffer.Bytes(), normalizedClientSchema, false)
 	if err != nil {
 		return NormalizationResult{
 			Successful: false,
@@ -128,6 +174,8 @@ func (s *Schema) Normalize() (result NormalizationResult, err error) {
 
 	s.rawSchema = normalizedSchema.rawSchema
 	s.document = normalizedSchema.document
+	s.clientDocument = normalizedSchema.clientDocument
+	s.hasClientSchema = normalizedSchema.hasClientSchema
 	s.isNormalized = true
 	return NormalizationResult{Successful: true, Errors: nil}, nil
 }
@@ -391,7 +439,7 @@ func (s *Schema) putChildNode(nodes *[]TypeFields, typeName, fieldName string) (
 	return true
 }
 
-func createSchema(schemaContent []byte, mergeWithBaseSchema bool) (*Schema, error) {
+func createSchema(schemaContent []byte, clientSchemaContent []byte, mergeWithBaseSchema bool) (*Schema, error) {
 	document, report := astparser.ParseGraphqlDocumentBytes(schemaContent)
 	if report.HasErrors() {
 		return nil, report
@@ -413,10 +461,28 @@ func createSchema(schemaContent []byte, mergeWithBaseSchema bool) (*Schema, erro
 		rawSchema = rawSchemaBuffer.Bytes()
 	}
 
+	clientDocument := document
+	hasClientSchema := len(clientSchemaContent) != 0
+	if hasClientSchema {
+		clientDocument, report = astparser.ParseGraphqlDocumentBytes(clientSchemaContent)
+		if report.HasErrors() {
+			return nil, report
+		}
+
+		if mergeWithBaseSchema {
+			err := asttransform.MergeDefinitionWithBaseSchema(&clientDocument)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	schema := &Schema{
-		rawInput:  schemaContent,
-		rawSchema: rawSchema,
-		document:  document,
+		rawInput:        schemaContent,
+		rawSchema:       rawSchema,
+		document:        document,
+		clientDocument:  clientDocument,
+		hasClientSchema: hasClientSchema,
 	}
 	if err := schema.calcHash(); err != nil {
 		return nil, err

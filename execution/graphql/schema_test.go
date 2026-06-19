@@ -57,6 +57,25 @@ func TestNewSchemaFromString(t *testing.T) {
 	})
 }
 
+func TestNewSchemaFromStringWithClientSchema(t *testing.T) {
+	t.Parallel()
+	clientSchema := `type Query { hello: String }`
+	schema, err := NewSchemaFromStringWithClientSchema(`type Query { hello: String hidden: String }`, &clientSchema)
+	require.NoError(t, err)
+
+	clientDocument, err := astprinter.PrintStringIndent(schema.ClientDocument(), "    ")
+	require.NoError(t, err)
+	assert.NotContains(t, clientDocument, "hidden")
+
+	normalizationResult, err := schema.Normalize()
+	require.NoError(t, err)
+	assert.True(t, normalizationResult.Successful)
+
+	clientDocument, err = astprinter.PrintStringIndent(schema.ClientDocument(), "    ")
+	require.NoError(t, err)
+	assert.NotContains(t, clientDocument, "hidden")
+}
+
 func TestSchema_Normalize(t *testing.T) {
 	t.Parallel()
 	t.Run("should successfully normalize schema", func(t *testing.T) {
@@ -84,7 +103,7 @@ func TestSchema_HasQueryType(t *testing.T) {
 	run := func(schema string, expectation bool) func(t *testing.T) {
 		return func(t *testing.T) {
 			t.Parallel()
-			parsedSchema, err := createSchema([]byte(schema), false)
+			parsedSchema, err := createSchema([]byte(schema), nil, false)
 			require.NoError(t, err)
 
 			result := parsedSchema.HasQueryType()

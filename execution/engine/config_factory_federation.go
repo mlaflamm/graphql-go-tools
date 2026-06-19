@@ -132,8 +132,12 @@ func (f *FederationEngineConfigFactory) BuildEngineConfiguration(routerConfig *n
 	plannerConfiguration.DefaultFlushIntervalMillis = DefaultFlushIntervalInMilliseconds
 	plannerConfiguration.EnableOperationNamePropagation = true
 	schemaSDL := routerConfig.EngineConfig.GraphqlSchema
+	var clientSchemaSDL *string
+	if graphqlClientSchema := routerConfig.EngineConfig.GetGraphqlClientSchema(); graphqlClientSchema != "" {
+		clientSchemaSDL = &graphqlClientSchema
+	}
 
-	schema, err := graphql.NewSchemaFromString(schemaSDL)
+	schema, err := graphql.NewSchemaFromStringWithClientSchema(schemaSDL, clientSchemaSDL)
 	if err != nil {
 		return Configuration{}, err
 	}

@@ -948,6 +948,32 @@ func TestExecutionEngine_Execute(t *testing.T) {
 				indentJSON:      true,
 			},
 		))
+
+		t.Run("uses client schema for introspection when available", runWithoutError(
+			ExecutionEngineTestCase{
+				schema: func() *graphql.Schema {
+					clientSchema := `type Query { hello: String }`
+					schema, err := graphql.NewSchemaFromStringWithClientSchema(`type Query { hello: String hidden: String }`, &clientSchema)
+					require.NoError(t, err)
+					return schema
+				}(),
+				operation: func(t *testing.T) graphql.Request {
+					return graphql.Request{
+						OperationName: "myIntrospection",
+						Query: `
+							query myIntrospection {
+								__type(name: "Query") {
+									fields {
+										name
+									}
+								}
+							}
+						`,
+					}
+				},
+				expectedResponse: `{"data":{"__type":{"fields":[{"name":"hello"}]}}}`,
+			},
+		))
 	})
 
 	t.Run("execute simple hero operation with graphql data source", runWithoutError(

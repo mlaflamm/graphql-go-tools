@@ -235,6 +235,30 @@ func TestEngineConfigFactory_EngineConfiguration(t *testing.T) {
 			return conf
 		})
 	})
+
+	t.Run("should load client schema from router config when present", func(t *testing.T) {
+		engineConfigFactory := NewFederationEngineConfigFactory(
+			engineCtx,
+			WithFederationHttpClient(httpClient),
+			WithFederationStreamingClient(streamingClient),
+			WithFederationSubscriptionClientFactory(&MockSubscriptionClientFactory{}),
+		)
+
+		data, err := os.ReadFile("testdata/config_factory_federation/config.json")
+		require.NoError(t, err)
+
+		var rc nodev1.RouterConfig
+		require.NoError(t, protojson.Unmarshal(data, &rc))
+		clientSchema := clientFederationSchema
+		rc.EngineConfig.GraphqlClientSchema = &clientSchema
+
+		config, err := engineConfigFactory.BuildEngineConfiguration(&rc)
+		require.NoError(t, err)
+
+		expectedSchema, err := graphql.NewSchemaFromStringWithClientSchema(baseFederationSchema, &clientSchema)
+		require.NoError(t, err)
+		assert.Equal(t, expectedSchema, config.Schema())
+	})
 }
 
 const (
@@ -354,5 +378,25 @@ type Review {
   body: String!
   author: User!
   product: Product!
+}`
+
+	clientFederationSchema = `schema {
+  query: Query
+}
+
+type Query {
+  me: User
+  topProducts(first: Int = 5): [Product]
+}
+
+type User {
+  id: ID!
+  username: String!
+}
+
+type Product {
+  upc: String!
+  name: String!
+  price: Int!
 }`
 )

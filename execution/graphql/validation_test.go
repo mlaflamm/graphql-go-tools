@@ -102,6 +102,19 @@ func TestRequest_ValidateForSchema(t *testing.T) {
 		assert.True(t, result.Valid)
 		assert.Nil(t, result.Errors)
 	})
+
+	t.Run("should validate against the client schema when available", func(t *testing.T) {
+		t.Parallel()
+		clientSchema := `type Query { hello: String }`
+		schema, err := NewSchemaFromStringWithClientSchema(`type Query { hello: String hidden: String }`, &clientSchema)
+		require.NoError(t, err)
+
+		request := Request{Query: `query { hidden }`}
+		result, err := request.ValidateForSchema(schema)
+		assert.NoError(t, err)
+		assert.False(t, result.Valid)
+		assert.Greater(t, result.Errors.Count(), 0)
+	})
 }
 
 func TestRequest_ValidateRestrictedFields(t *testing.T) {

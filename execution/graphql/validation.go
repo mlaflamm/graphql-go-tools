@@ -35,7 +35,7 @@ func (r *Request) ValidateForSchema(schema *Schema, options ...astvalidation.Opt
 	}
 
 	validator := astvalidation.DefaultOperationValidator(options...)
-	validator.Validate(&r.document, &schema.document, &report)
+	validator.Validate(&r.document, schema.ClientDocument(), &report)
 	result, err = operationValidationResultFromReport(report)
 	if err != nil {
 		return result, err

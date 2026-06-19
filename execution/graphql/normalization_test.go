@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/astprinter"
 	"github.com/wundergraph/graphql-go-tools/v2/pkg/graphqlerrors"
@@ -185,6 +186,18 @@ func TestRequest_Normalize(t *testing.T) {
     charactersByIds(ids: $ids){
         name
     }
+}`)
+	})
+
+	t.Run("should normalize using the client schema when available", func(t *testing.T) {
+		t.Parallel()
+		clientSchema := `type Query { hello(arg: [Int]): String }`
+		schema, err := NewSchemaFromStringWithClientSchema(`type Query { hello(arg: Int): String }`, &clientSchema)
+		require.NoError(t, err)
+
+		request := Request{OperationName: "Hello", Query: `query Hello { hello(arg: 1) }`}
+		runNormalizationWithSchema(t, schema, &request, `{"a":[1]}`, `query Hello($a: [Int]){
+    hello(arg: $a)
 }`)
 	})
 }
